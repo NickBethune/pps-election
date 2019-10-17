@@ -13,7 +13,7 @@ WINNER_TAKE_ALL = False
 # From which parties perspective are we gerrymandering
 GERRY_FOR_P1 = False
 # Use seats won as evolutionary criteria / alternatively the mean of efficiency gap and asymmmetry AUC
-GERRY_OBJECTIVE_SEATS_WON = True
+GERRY_OBJECTIVE_SEATS_WON = False
 
 NUM_VOTERS = 33333
 RANDOM_SEED = 1992
@@ -423,6 +423,11 @@ if __name__ == '__main__':
     else:
         print('Gerrymandering For Party 2!')
 
+    if GERRY_OBJECTIVE_SEATS_WON:
+        print('Optimizing for seats won!')
+    else:
+        print('Optimizing for mean of efficiency gap and asymmetry AUC!')
+
     # Extract Voters Positions
     voters = np.array(extractVoters("../../maps/g8/twoParties.map"))
     np.random.shuffle(voters)
@@ -476,14 +481,16 @@ if __name__ == '__main__':
     print('Initial Seats won={}/{} ({})'.format(int(seats_won), 243, round(seats_won / 243.0, 2)))
     json.dump(seats_by_vote_perc, open('gerrymander_data/initial_asymmetry_curve_for_{}.json'.format(party_str), 'w'))
 
-    best_score = -1
+    best_gerry_score = gerrymander_score
+    best_seat_score = seats_won
     for mut_idx in range(1000):
         print('{}/{} Evolutionary iterations complete'.format(mut_idx, 1000))
-        # Randomly jiggle map N times
         all_candidate_districts = []
         all_candidate_centroids = []
         gerrymander_scores = []
-        N = 10
+        seat_scores = []
+        # Randomly jiggle map N times
+        N = 3
         for _ in range(N):
             candidate_centroids, candidate_districts, voters_by_district = validate(
                 centroids, districts, voters, is_gerry=True)
@@ -492,23 +499,37 @@ if __name__ == '__main__':
             gerrymander_score, seats_won, seats_by_vote_perc = asymmetry_score(
                 candidate_districts, voters, voters_by_district)
 
-            if GERRY_OBJECTIVE_SEATS_WON:
-                gerrymander_scores.append(seats_won)
-            else:
-                gerrymander_scores.append(gerrymander_score)
+            seat_scores.append(seats_won)
+            gerrymander_scores.append(gerrymander_score)
 
         gerrymander_scores = np.array(gerrymander_scores)
-        best_idx = np.argsort(gerrymander_scores)[-1]
-        centroids = all_candidate_centroids[best_idx]
-        best_score = max(best_score, gerrymander_scores[best_idx])
-        # Choose best district from gerrymandering perspective
-        districts = all_candidate_districts[best_idx]
+        seat_scores = np.array(seat_scores)
+        best_seat_idx = np.argsort(seat_scores)[-1]
+        best_gerry_idx = np.argsort(gerrymander_scores)[-1]
+        best_seat_score = max(best_seat_score, seat_scores[best_seat_idx])
+        best_gerry_score = max(best_gerry_score, gerrymander_scores[best_gerry_idx])
 
-        print('Most seats at {} is {}/{}'.format(mut_idx, best_score, 243))
-        np.save(open('gerrymander_data/best_districts_for_{}_at_{}.npy'.format(party_str, mut_idx), 'wb'), districts)
-        json.dump(centroids.tolist(), open('gerrymander_data/best_centroids_for_{}_at_{}.json'.format(
-            party_str, mut_idx), 'w'))
-        json.dump(seats_by_vote_perc, open('gerrymander_data/asymmetry_curve_for_{}_at_{}.json'.format(
-            party_str, mut_idx), 'w'))
+        best_idx = best_seat_idx if GERRY_OBJECTIVE_SEATS_WON else best_gerry_idx
+        best_score = best_seat_score if GERRY_OBJECTIVE_SEATS_WON else best_gerry_score
+
+        #  Is the max score the current score
+        if GERRY_OBJECTIVE_SEATS_WON:
+            has_improved = seat_scores[best_seat_idx] == best_seat_score
+        else:
+            has_improved = gerrymander_scores[best_gerry_idx] == best_gerry_score
+
+        if has_improved:  # or not made objective worse
+            centroids = all_candidate_centroids[best_idx]
+            # Choose best district from gerrymandering perspective
+            districts = all_candidate_districts[best_idx]
+            print('Most seats at {} is {}/{}'.format(mut_idx, int(best_seat_score), 243))
+            print('Best Gerrymander Score (-1, 1) at {} is={}'.format(mut_idx, best_gerry_score))
+            np.save(open('gerrymander_data/best_districts_for_{}_at_{}.npy'.format(party_str, mut_idx), 'wb'), districts)
+            json.dump(centroids.tolist(), open('gerrymander_data/best_centroids_for_{}_at_{}.json'.format(
+                party_str, mut_idx), 'w'))
+            json.dump(seats_by_vote_perc, open('gerrymander_data/asymmetry_curve_for_{}_at_{}.json'.format(
+                party_str, mut_idx), 'w'))
+        else:
+            print('Didn\'t improve.  Trying again!')
 
     print('Best gerrymander score (-1, 1) is {}'.format(best_score))
