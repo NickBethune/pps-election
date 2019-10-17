@@ -417,6 +417,8 @@ if __name__ == '__main__':
 
     if WINNER_TAKE_ALL:
         print('WINNER TAKE ALL!')
+    else:
+        print('3 Land Setup')
 
     if GERRY_FOR_P1:
         print('Gerrymandering For Party 1!')
