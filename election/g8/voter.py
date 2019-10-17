@@ -10,13 +10,18 @@ from scipy.spatial import Voronoi
 
 
 WINNER_TAKE_ALL = False
+# From which parties perspective are we gerrymandering
+GERRY_FOR_P1 = False
+# Use seats won as evolutionary criteria / alternatively the mean of efficiency gap and asymmmetry AUC
+GERRY_OBJECTIVE_SEATS_WON = True
+
 NUM_VOTERS = 33333
 RANDOM_SEED = 1992
 NUM_REBALANCE = 100
 LOAD_CLUSTERS = True
 BASIC_KMEANS = True
 POPULATION_BOUNDS = 0.1
-TARGET_INIT_POPULATION_BOUNDS = 0.025
+TARGET_INIT_POPULATION_BOUNDS = 0.1
 
 np.random.seed(RANDOM_SEED)
 
@@ -101,7 +106,12 @@ def sample_new_point(prev_x, prev_y, area):
 def asymmetry_score(districts, voters, voters_by_district):
     seats_by_vote_perc = {}
     total_wasted_votes = np.zeros([2, ])
-    variations = np.arange(0.1, 1.0, .1)
+    variations = np.arange(0.3, 0.8, .1)
+
+    # Baseline performance
+    _, baseline_seats, _ = get_result(districts, voters, voters_by_district)
+    baseline_seats = baseline_seats[0] if GERRY_FOR_P1 else baseline_seats[1]
+
     for target_v in variations:
         new_voters = copy.deepcopy(voters)
         for v in new_voters:
@@ -116,7 +126,7 @@ def asymmetry_score(districts, voters, voters_by_district):
     assert avg_pref_variation > 0.45 and avg_pref_variation < 0.55
     avg_votes_to_seats = np.mean(np.array(list(seats_by_vote_perc.values())))
     avg_votes_to_seats_norm = 2 * avg_votes_to_seats - 1
-    return (avg_votes_to_seats_norm + avg_efficiency_gap) / 2.0
+    return (avg_votes_to_seats_norm + avg_efficiency_gap) / 2.0, baseline_seats, seats_by_vote_perc
 
 
 def find_voter_district(districts, voter, recent_district_idxs=[]):
@@ -130,8 +140,9 @@ def find_voter_district(districts, voter, recent_district_idxs=[]):
 
 
 def compute_seat_count(party_votes):
-    p1_pref = party_votes[0] / float(sum(party_votes))
-    p2_pref = party_votes[1] / float(sum(party_votes))
+    N = float(sum(party_votes))
+    p1_pref = party_votes[0] / N
+    p2_pref = party_votes[1] / N
     if WINNER_TAKE_ALL:
         if p1_pref > p2_pref:
             return [1, 0]
@@ -145,7 +156,8 @@ def compute_seat_count(party_votes):
         else:
             p2_seats += 1
             p2_pref -= .25
-    return (p1_seats, p1_pref), (p2_seats, p2_pref)
+    assert p1_seats + p2_seats == 3
+    return (p1_seats, p1_pref * N), (p2_seats, p2_pref * N)
 
 
 def compute_seats(district_votes):
@@ -182,8 +194,12 @@ def adjust_voter_preference(pref, target_p2=0.5):
 
 
 def sample_vote(pref):
-    assert sum(pref) == 1.0
-    return np.random.binomial(size=1, n=1, p=pref[1])[0]
+    if sum(pref) == 1.0:
+        return np.random.binomial(size=1, n=1, p=pref[1])[0]
+    else:
+        p1_pref = pref[0] / float(sum(pref))
+        p1_vote = np.random.random() < p1_pref
+        return 0 if p1_vote else 1
 
 
 def is_valid_draw(new_districts, voters, is_gerry=True):
@@ -227,7 +243,8 @@ def is_valid_draw(new_districts, voters, is_gerry=True):
         too_big_district_idxs = sorted_pop_idxs[too_big_breakpoint:]
 
     if len(too_small_district_idxs) + len(too_big_district_idxs) == 0:
-        print('Total Underflow / Overflow is {} / {} voters'.format(0, 0))
+        if not is_gerry:
+            print('Total Underflow / Overflow is {} / {} voters'.format(0, 0))
         return True, voters_by_district, 0
 
     underflow = lower - district_voters[too_small_district_idxs]
@@ -235,8 +252,8 @@ def is_valid_draw(new_districts, voters, is_gerry=True):
 
     total_overflow = overflow.sum()
     total_underflow = underflow.sum()
-
-    print('Total Underflow / Overflow is {} / {} voters'.format(total_underflow, total_overflow))
+    if not is_gerry:
+        print('Total Underflow / Overflow is {} / {} voters'.format(total_underflow, total_overflow))
     return False, None, total_overflow + total_underflow
 
 
@@ -280,7 +297,8 @@ def validate(centroids, districts, voters, is_gerry=True):
             new_districts = district_candidates
             new_centroids = centroid_candidates
         else:
-            print('Tried unsuccessfully')
+            if not is_gerry:
+                print('Tried unsuccessfully')
 
         if total_flow < 25.0 and iteration > 1000 and not is_gerry:
             print('Saving almost data!')
@@ -984,7 +1002,6 @@ def _labels_inertia(X, x_squared_norms, centers,
     return labels, inertia
 
 
-
 def _labels_inertia_precompute_dense(X, x_squared_norms, centers, distances):
     """Compute labels and inertia using a full distance matrix.
     This will overwrite the 'distances' array in-place.
@@ -1088,6 +1105,7 @@ def _labels_inertia_precompute_dense(X, x_squared_norms, centers, distances):
 
     return best_labels, inertia
 
+
 def get_best_cluster_for_point(point, all_distances):
     """Gets the best cluster by distance for a point
 
@@ -1124,9 +1142,11 @@ def get_best_point_distances(point, all_distances):
     sorted_points = sort_adjust_row(points_distances)
     return sorted_points
 
+
 def sort_adjust_row(points_distances):
     "Sorts the points row from smallest distance to lowest distance"
     return sorted([(cluster_id, point_dist) for cluster_id, point_dist in enumerate(points_distances)], key=lambda x: x[1])
+
 
 def is_cluster_full(cluster_id, max_cluster_size, labels):
     """Determies in a cluster is full"""
@@ -1134,9 +1154,11 @@ def is_cluster_full(cluster_id, max_cluster_size, labels):
     is_full = cluster_count >= max_cluster_size
     return is_full
 
+
 def get_clusters_size(n_samples, n_clusters):
     """Gets the number of members per cluster for equal groups kmeans"""
     return (n_samples + n_clusters - 1) // n_clusters
+
 
 def initial_assignment(labels, mindist, n_samples, all_distances, max_cluster_size):
     """Initial assignment of labels and mindist"""
@@ -1152,19 +1174,41 @@ def initial_assignment(labels, mindist, n_samples, all_distances, max_cluster_si
     return labels, mindist
 
 
-
 if __name__ == '__main__':
     ndist = 243 if WINNER_TAKE_ALL else 81
+
+    if WINNER_TAKE_ALL:
+        print('WINNER TAKE ALL!')
+
+    if GERRY_FOR_P1:
+        print('Gerrymandering For Party 1!')
+    else:
+        print('Gerrymandering For Party 2!')
 
     # Extract Voters Positions
     voters = np.array(extractVoters("../../maps/g8/twoParties.map"))
     np.random.shuffle(voters)
+
+    initial_popular_vote = [0, 0]
+
+    for voter in voters:
+        prev_prefs = voter.prefs
+        initial_popular_vote[0] += prev_prefs[0]
+        initial_popular_vote[1] += prev_prefs[1]
+        if GERRY_FOR_P1:
+            new_prefs = [prev_prefs[1], prev_prefs[0]]
+            voter.prefs = new_prefs
+
+    total = float(sum(initial_popular_vote))
+    initial_popular_vote = [v / total for v in initial_popular_vote]
+    print('Initial preferences: P1={}, P2={}'.format(initial_popular_vote[0], initial_popular_vote[1]))
+
     voters = voters[:NUM_VOTERS].tolist()
     V = np.vstack([np.array((i.x, i.y)) for i in voters])
 
     if LOAD_CLUSTERS:
         print('Loading Clusters')
-        centroids = np.array(json.load(open('adjusted_data/almost_centroids.json', 'r')))
+        centroids = np.array(json.load(open('adjusted_data/centroids.json', 'r')))
     else:
         if BASIC_KMEANS:
             kmeans = MiniBatchKMeans(
@@ -1186,7 +1230,7 @@ if __name__ == '__main__':
     districts = draw_districts(centroids)
 
     # Ensure valid
-    centroids, districts, _ = validate(centroids, districts, voters, is_gerry=False)
+    centroids, districts, voters_by_district = validate(centroids, districts, voters, is_gerry=False)
     json.dump(centroids.tolist(), open('adjusted_data/centroids.json', 'w'))
     np.save(open('adjusted_data/districts.npy', 'wb'), districts)
 
@@ -1194,21 +1238,33 @@ if __name__ == '__main__':
     initial_districts = copy.deepcopy(districts)  # Keep a hardcopy of this
 
     print('Starting evolutionary approach!')
+    party_str = 'party_1' if GERRY_FOR_P1 else 'party_2'
+
+    gerrymander_score, seats_won, seats_by_vote_perc = asymmetry_score(districts, voters, voters_by_district)
+    print('Initial Gerrymander Score={}'.format(gerrymander_score))
+    print('Initial Seats won={}/{} ({})'.format(int(seats_won), 243, round(seats_won / 243.0, 2)))
+    json.dump(seats_by_vote_perc, open('gerrymander_data/initial_asymmetry_curve_for_{}.json'.format(party_str), 'w'))
 
     best_score = -1
     for mut_idx in range(1000):
+        print('{}/{} Evolutionary iterations complete'.format(mut_idx, 1000))
         # Randomly jiggle map N times
         all_candidate_districts = []
         all_candidate_centroids = []
         gerrymander_scores = []
-        N = 5
-        for n in range(N):
+        N = 10
+        for _ in range(N):
             candidate_centroids, candidate_districts, voters_by_district = validate(
                 centroids, districts, voters, is_gerry=True)
             all_candidate_districts.append(candidate_districts)
             all_candidate_centroids.append(candidate_centroids)
-            gerrymander_score = asymmetry_score(candidate_districts, voters, voters_by_district)
-            gerrymander_scores.append(gerrymander_score)
+            gerrymander_score, seats_won, seats_by_vote_perc = asymmetry_score(
+                candidate_districts, voters, voters_by_district)
+
+            if GERRY_OBJECTIVE_SEATS_WON:
+                gerrymander_scores.append(seats_won)
+            else:
+                gerrymander_scores.append(gerrymander_score)
 
         gerrymander_scores = np.array(gerrymander_scores)
         best_idx = np.argsort(gerrymander_scores)[-1]
@@ -1217,8 +1273,11 @@ if __name__ == '__main__':
         # Choose best district from gerrymandering perspective
         districts = all_candidate_districts[best_idx]
 
-        print('Best score at {} is {}'.format(mut_idx, best_score))
-        np.save(open('gerrymander_data/best_districts_at_{}.npy'.format(mut_idx), 'wb'), districts)
-        json.dump(centroids.tolist(), open('gerrymander_data/best_centroids_at_{}.json'.format(mut_idx), 'w'))
+        print('Most seats at {} is {}/{}'.format(mut_idx, best_score, 243))
+        np.save(open('gerrymander_data/best_districts_for_{}_at_{}.npy'.format(party_str, mut_idx), 'wb'), districts)
+        json.dump(centroids.tolist(), open('gerrymander_data/best_centroids_for_{}_at_{}.json'.format(
+            party_str, mut_idx), 'w'))
+        json.dump(seats_by_vote_perc, open('gerrymander_data/asymmetry_curve_for_{}_at_{}.json'.format(
+            party_str, mut_idx), 'w'))
 
-    print('Best gerrymander score (-1, 1) is {}'.format(len(districts)))
+    print('Best gerrymander score (-1, 1) is {}'.format(best_score))
