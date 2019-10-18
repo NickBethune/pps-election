@@ -104,12 +104,14 @@ def sample_new_point(prev_x, prev_y, area):
 
 def asymmetry_score(districts, voters, voters_by_district):
     seats_by_vote_perc = {}
-    total_wasted_votes = np.zeros([2, ])
+    # total_wasted_votes = np.zeros([2, ])
     variations = np.arange(0.3, 0.8, .1)
 
     # Baseline performance
-    _, baseline_seats, _ = get_result(districts, voters, voters_by_district)
-    baseline_seats = baseline_seats[0] if GERRY_FOR_P1 else baseline_seats[1]
+    _, baseline_seats, wasted_votes = get_result(districts, voters, voters_by_district)
+    baseline_seats = baseline_seats[1]
+
+    baseline_efficiency_gap = (wasted_votes[0] - wasted_votes[1]) / float(len(voters))
 
     for target_v in variations:
         new_voters = copy.deepcopy(voters)
@@ -118,14 +120,14 @@ def asymmetry_score(districts, voters, voters_by_district):
         popular_vote, seats, wasted_votes = get_result(districts, new_voters, voters_by_district)
         p2_vote_perc = popular_vote[1] / float(len(voters))
         seats_by_vote_perc[p2_vote_perc] = seats[1] / 243.0
-        total_wasted_votes += np.array(wasted_votes)
-    avg_wasted_votes = total_wasted_votes / float(len(variations))
-    avg_efficiency_gap = (avg_wasted_votes[0] - avg_wasted_votes[1]) / float(len(voters))
-    avg_pref_variation = np.mean(np.array(list(seats_by_vote_perc.keys())))
-    assert avg_pref_variation > 0.45 and avg_pref_variation < 0.55
-    avg_votes_to_seats = np.mean(np.array(list(seats_by_vote_perc.values())))
-    avg_votes_to_seats_norm = 2 * avg_votes_to_seats - 1
-    return (avg_votes_to_seats_norm + avg_efficiency_gap) / 2.0, baseline_seats, seats_by_vote_perc
+        # total_wasted_votes += np.array(wasted_votes)
+    # avg_wasted_votes = total_wasted_votes / float(len(variations))
+    # avg_efficiency_gap = (avg_wasted_votes[0] - avg_wasted_votes[1]) / float(len(voters))
+    # avg_pref_variation = np.mean(np.array(list(seats_by_vote_perc.keys())))
+    # assert avg_pref_variation > 0.45 and avg_pref_variation < 0.55
+    # avg_votes_to_seats = np.mean(np.array(list(seats_by_vote_perc.values())))
+    # avg_votes_to_seats_norm = 2 * avg_votes_to_seats - 1
+    return baseline_efficiency_gap, baseline_seats, seats_by_vote_perc
 
 
 def find_voter_district(districts, voter, recent_district_idxs=[]):
