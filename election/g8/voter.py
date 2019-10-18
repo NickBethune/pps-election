@@ -11,7 +11,7 @@ from scipy.spatial import Voronoi
 
 WINNER_TAKE_ALL = False
 # From which parties perspective are we gerrymandering
-GERRY_FOR_P1 = False
+GERRY_FOR_P1 = True
 # Use seats won as evolutionary criteria / alternatively the mean of efficiency gap and asymmmetry AUC
 GERRY_OBJECTIVE_SEATS_WON = False
 
@@ -102,17 +102,9 @@ def sample_new_point(prev_x, prev_y, area):
             return new_x, new_y
 
 
-def asymmetry_score(districts, voters, voters_by_district):
+def draw_asymmetry_curve(districts, voters, voters_by_district):
     seats_by_vote_perc = {}
-    # total_wasted_votes = np.zeros([2, ])
-    variations = np.arange(0.3, 0.8, .1)
-
-    # Baseline performance
-    _, baseline_seats, wasted_votes = get_result(districts, voters, voters_by_district)
-    baseline_seats = baseline_seats[1]
-
-    baseline_efficiency_gap = (wasted_votes[0] - wasted_votes[1]) / float(len(voters))
-
+    variations = np.arange(0.1, 1.0, .1)
     for target_v in variations:
         new_voters = copy.deepcopy(voters)
         for v in new_voters:
@@ -120,14 +112,17 @@ def asymmetry_score(districts, voters, voters_by_district):
         popular_vote, seats, wasted_votes = get_result(districts, new_voters, voters_by_district)
         p2_vote_perc = popular_vote[1] / float(len(voters))
         seats_by_vote_perc[p2_vote_perc] = seats[1] / 243.0
-        # total_wasted_votes += np.array(wasted_votes)
-    # avg_wasted_votes = total_wasted_votes / float(len(variations))
-    # avg_efficiency_gap = (avg_wasted_votes[0] - avg_wasted_votes[1]) / float(len(voters))
-    # avg_pref_variation = np.mean(np.array(list(seats_by_vote_perc.keys())))
-    # assert avg_pref_variation > 0.45 and avg_pref_variation < 0.55
-    # avg_votes_to_seats = np.mean(np.array(list(seats_by_vote_perc.values())))
-    # avg_votes_to_seats_norm = 2 * avg_votes_to_seats - 1
-    return baseline_efficiency_gap, baseline_seats, seats_by_vote_perc
+    return seats_by_vote_perc
+
+
+def asymmetry_score(districts, voters, voters_by_district):
+    # Baseline performance
+    _, baseline_seats, wasted_votes = get_result(districts, voters, voters_by_district)
+    baseline_seats = baseline_seats[1]
+
+    baseline_efficiency_gap = (wasted_votes[0] - wasted_votes[1]) / float(len(voters))
+
+    return baseline_efficiency_gap, baseline_seats
 
 
 def find_voter_district(districts, voter, recent_district_idxs=[]):
@@ -430,7 +425,7 @@ if __name__ == '__main__':
     if GERRY_OBJECTIVE_SEATS_WON:
         print('Optimizing for seats won!')
     else:
-        print('Optimizing for mean of efficiency gap and asymmetry AUC!')
+        print('Optimizing for efficiency gap!')
 
     # Extract Voters Positions
     voters = np.array(extractVoters("../../maps/g8/twoParties.map"))
@@ -480,7 +475,8 @@ if __name__ == '__main__':
     print('Starting evolutionary approach!')
     party_str = 'party_1' if GERRY_FOR_P1 else 'party_2'
 
-    gerrymander_score, seats_won, seats_by_vote_perc = asymmetry_score(districts, voters, voters_by_district)
+    gerrymander_score, seats_won = asymmetry_score(districts, voters, voters_by_district)
+    seats_by_vote_perc = draw_asymmetry_curve(districts, voters, voters_by_district)
     print('Initial Gerrymander Score={}'.format(gerrymander_score))
     print('Initial Seats won={}/{} ({})'.format(int(seats_won), 243, round(seats_won / 243.0, 2)))
     json.dump(seats_by_vote_perc, open('gerrymander_data/initial_asymmetry_curve_for_{}.json'.format(party_str), 'w'))
@@ -500,8 +496,7 @@ if __name__ == '__main__':
                 centroids, districts, voters, is_gerry=True)
             all_candidate_districts.append(candidate_districts)
             all_candidate_centroids.append(candidate_centroids)
-            gerrymander_score, seats_won, seats_by_vote_perc = asymmetry_score(
-                candidate_districts, voters, voters_by_district)
+            gerrymander_score, seats_won = asymmetry_score(candidate_districts, voters, voters_by_district)
 
             seat_scores.append(seats_won)
             gerrymander_scores.append(gerrymander_score)
@@ -531,10 +526,12 @@ if __name__ == '__main__':
             np.save(open('gerrymander_data/best_districts_for_{}_at_{}.npy'.format(party_str, mut_idx), 'wb'), districts)
             json.dump(centroids.tolist(), open('gerrymander_data/best_centroids_for_{}_at_{}.json'.format(
                 party_str, mut_idx), 'w'))
+            seats_by_vote_perc = draw_asymmetry_curve(districts, voters, voters_by_district)
             json.dump(seats_by_vote_perc, open('gerrymander_data/asymmetry_curve_for_{}_at_{}.json'.format(
                 party_str, mut_idx), 'w'))
         else:
             curr_best = seat_scores[best_seat_idx] if GERRY_OBJECTIVE_SEATS_WON else gerrymander_scores[best_gerry_idx]
             print('Didn\'t improve.  Trying again!  {} not greater than {}'.format(curr_best, best_score))
 
-    print('Best gerrymander score (-1, 1) is {}'.format(best_score))
+    print('Best gerrymander score (-1, 1) is {}'.format(best_gerry_score))
+    print('Most seats is {}/{}'.format(best_seat_score, 243))
