@@ -534,6 +534,7 @@ if __name__ == '__main__':
             json.dump(seats_by_vote_perc, open('gerrymander_data/asymmetry_curve_for_{}_at_{}.json'.format(
                 party_str, mut_idx), 'w'))
         else:
-            print('Didn\'t improve.  Trying again!')
+            curr_best = seat_scores[best_seat_idx] if GERRY_OBJECTIVE_SEATS_WON else gerrymander_scores[best_gerry_idx]
+            print('Didn\'t improve.  Trying again!  {} not greater than {}'.format(curr_best, best_score))
 
     print('Best gerrymander score (-1, 1) is {}'.format(best_score))
